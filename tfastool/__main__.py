@@ -8,6 +8,12 @@
     python -m tfastool wire 入力.tfs 出力.tfs --sheet 2 --between 86564,86570
                                                2 つの部材（要素ID）を配線で結ぶ（複数指定可）。
                                                斜めの位置関係なら L 字に折る（--corner hv で横→縦）
+    python -m tfastool layers 図面.tfs         レイヤ番号と名前を表示
+    python -m tfastool rooms 図面.tfs --sheet 3
+                                               建築図のシートから部屋名・範囲・中心を表示
+    python -m tfastool roomlight 入力.tfs 出力.tfs --arch-sheet 3 --sheet 2 \\
+                                 --code E0C40S290003 --room "洋室(3)"
+                                               部屋の中心（壁と壁の中心）に部材を配置（--room は複数指定可）
     python -m tfastool info 図面.tfs           ファイル構造の概要を表示
     python -m tfastool rewrite 入力.tfs 出力.tfs [--level N]
                                                読み込んで書き直す（書き込み検証用）
@@ -18,7 +24,7 @@ import argparse
 import csv
 import sys
 
-from . import container, elements, parts, wiring
+from . import container, elements, parts, rooms, wiring
 
 
 def cmd_parts(args) -> int:
@@ -99,6 +105,59 @@ def cmd_wire(args) -> int:
     return 0
 
 
+def _sheet(tfs, number: int):
+    all_sheets = elements.sheets(tfs)
+    if not 1 <= number <= len(all_sheets):
+        raise LookupError(f"シート番号は 1〜{len(all_sheets)} で指定してください。")
+    return all_sheets[number - 1]
+
+
+def _wall_layers(tfs, args) -> set[int]:
+    if args.wall_layers:
+        return {int(n) for n in args.wall_layers.split(",")}
+    return rooms.wall_layers(tfs)
+
+
+def cmd_layers(args) -> int:
+    for number, name in sorted(rooms.layer_names(container.load(args.file)).items()):
+        print(f"{number:4d}  {name}")
+    return 0
+
+
+def cmd_rooms(args) -> int:
+    tfs = container.load(args.file)
+    try:
+        found = rooms.find_rooms(_sheet(tfs, args.sheet), _wall_layers(tfs, args))
+    except LookupError as error:
+        print(error, file=sys.stderr)
+        return 1
+    for room in found:
+        (cx, cy), (width, height) = room.center, room.size
+        print(f"{room.name}\t中心 X={cx:.0f} Y={cy:.0f}\t幅 {width:.0f} × 奥行 {height:.0f}")
+    return 0
+
+
+def cmd_roomlight(args) -> int:
+    tfs = container.load(args.input)
+    try:
+        found = rooms.find_rooms(_sheet(tfs, args.arch_sheet), _wall_layers(tfs, args))
+        target = _sheet(tfs, args.sheet)
+        for name in args.room:
+            matches = [room for room in found if room.name == name]
+            if len(matches) != 1:
+                raise LookupError(f"部屋「{name}」が{'見つかりません' if not matches else '複数あります'}。"
+                                  "rooms コマンドで名前を確認してください。")
+            x, y = matches[0].center
+            elements.place_part(tfs, target, args.code, x, y)
+            print(f"{name}: X={x:.0f} Y={y:.0f} に配置")
+    except LookupError as error:
+        print(error, file=sys.stderr)
+        return 1
+    container.save(tfs, args.output)
+    print("書き出しました:", args.output)
+    return 0
+
+
 def cmd_info(args) -> int:
     tfs = container.load(args.file)
     for section in tfs.sections:
@@ -137,6 +196,14 @@ def main(argv=None) -> int:
     p.add_argument("--corner", choices=["vh", "hv"], default="vh",
                    help="斜めの位置関係のとき L 字に折る順序。vh=縦→横（既定）、hv=横→縦")
     p.set_defaults(func=cmd_wire)
+    p = sub.add_parser("layers"); p.add_argument("file"); p.set_defaults(func=cmd_layers)
+    wall_help = "壁として扱うレイヤ番号（カンマ区切り）。省略時は名前に 仕上/開口/建具 を含むレイヤ"
+    p = sub.add_parser("rooms"); p.add_argument("file"); p.add_argument("--sheet", type=int, required=True)
+    p.add_argument("--wall-layers", help=wall_help); p.set_defaults(func=cmd_rooms)
+    p = sub.add_parser("roomlight"); p.add_argument("input"); p.add_argument("output")
+    p.add_argument("--arch-sheet", type=int, required=True); p.add_argument("--sheet", type=int, required=True)
+    p.add_argument("--code", required=True); p.add_argument("--room", action="append", required=True)
+    p.add_argument("--wall-layers", help=wall_help); p.set_defaults(func=cmd_roomlight)
     p = sub.add_parser("info"); p.add_argument("file"); p.set_defaults(func=cmd_info)
     p = sub.add_parser("rewrite"); p.add_argument("input"); p.add_argument("output")
     p.add_argument("--level", type=int, default=6); p.set_defaults(func=cmd_rewrite)
