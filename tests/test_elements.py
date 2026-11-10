@@ -62,6 +62,14 @@ class ElementsTest(unittest.TestCase):
         self.assertEqual(parts.count_parts(again)[0].counts["E0A10S290008"], 2)
         self.assertEqual(elements.top_elements(sheet)[0].origin, (100.0, 200.0))
 
+    def test_place_part(self):
+        tfs = make_tfs()
+        sheet = elements.sheets(tfs)[0]
+        placed = elements.place_part(tfs, sheet, "E0A10S290008", 5000, 6000)
+        self.assertEqual(placed.origin, (5000.0, 6000.0))
+        with self.assertRaises(LookupError):
+            elements.place_part(tfs, sheet, "E0C10S272010", 0, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

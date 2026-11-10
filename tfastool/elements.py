@@ -152,3 +152,16 @@ def duplicate_element(tfs: TfsFile, sheet: Record, element: Element,
     records[element.end + 1 : element.end + 1] = copies
     counters.body = struct.pack("<II", count, next_id)
     return _describe(records, element.end + 1, element.end + len(copies))
+
+
+def place_part(tfs: TfsFile, sheet: Record, code: str, x: float, y: float) -> Element:
+    """部材コード code の部材を、配置基準点が (x, y) になるように 1 個追加する。
+
+    同じシートにすでに配置されている同じ部材をひな形として複製するため、
+    その部材が 1 個も無いシートには追加できない。向きはひな形と同じになる。
+    """
+    for element in top_elements(sheet):
+        if element.code == code and element.origin is not None:
+            return duplicate_element(tfs, sheet, element,
+                                     x - element.origin[0], y - element.origin[1])
+    raise LookupError(f"ひな形にできる部材 {code} がこのシートにありません")
