@@ -33,7 +33,7 @@ def template_wire() -> list:
         R(2, 5, struct.pack("<II", 30, wiring.WIRE_FLAGS)),
         R(4, 5, elements.ATTR_LINK + struct.pack("<I", 10) + wiring.END_START
           + struct.pack("<I", 20) + wiring.END_FINISH),
-        R(4, 5, b"\x00\x04\0\0"), R(4, 5, b"\x02\x04\0\0"), R(4, 5, b"\x0a\x04\0\0"),
+        R(4, 5, b"\x00\x04\0\0" + struct.pack("<2d", 1, 1)), R(4, 5, b"\x02\x04\0\0"), R(4, 5, b"\x0a\x04\0\0"),
         R(4, 5, bytes(ends)),
         R(3, 5, geometry(0x39, struct.pack("<II4d", 2, 1, 0, 0, 0, 1000))),
         R(2, 5, struct.pack("<II", 31, 0x410)), R(2, 5, struct.pack("<II", 32, 0x170)),
@@ -63,7 +63,7 @@ class WiringTest(unittest.TestCase):
     def test_horizontal_wire(self):
         tfs = make_tfs()
         sheet = elements.sheets(tfs)[0]
-        wire_id = wiring.add_straight_wire(tfs, sheet, 40, 50)
+        wire_id = wiring.add_wire(tfs, sheet, 40, 50)
         self.assertEqual(wire_id, 100)
         self.assertEqual(struct.unpack("<II", tfs.section(5).records[0].body), (18, 104))
         by_id = {e.element_id: e for e in elements.top_elements(sheet)}
@@ -89,17 +89,56 @@ class WiringTest(unittest.TestCase):
     def test_second_link_gets_next_ordinal(self):
         tfs = make_tfs()
         sheet = elements.sheets(tfs)[0]
-        wiring.add_straight_wire(tfs, sheet, 20, 10)
+        wiring.add_wire(tfs, sheet, 20, 10)
         link = sheet.children[1]
         self.assertEqual(link.body[12:], struct.pack("<I", 100) + b"\x02\x01\0\x04")
+
+    def test_l_shaped_wire(self):
+        tfs = make_tfs()
+        sheet = elements.sheets(tfs)[0]
+        via = wiring.l_shaped_via(sheet, 40, 60)          # (5000,2000) → (4100,2100)
+        self.assertEqual(via, [(5000.0, 2100.0)])          # 縦→横、左折
+        wire_id = wiring.add_wire(tfs, sheet, 40, 60, via)
+        by_id = {e.element_id: e for e in elements.top_elements(sheet)}
+        wire = sheet.children[by_id[wire_id].start : by_id[wire_id].end + 1]
+        shapes = [r.body[10] if r.kind == 3 else {2: "(", 5: ")", 4: "a"}[r.kind] for r in wire]
+        self.assertEqual(shapes, ["(", "a", "a", "a", "a", "a", 0x39,
+                                  "(", "(", "a", 0x20, 0x20, 0x20, ")", 0x48,
+                                  "(", "a", 0x18, 0x18, 0x18, ")", ")",
+                                  "(", "a", "a", "a", 0x39, 0x10, 0x10, ")", ")"])
+        self.assertEqual(len(wire[2].body), 4 + 24)
+        self.assertEqual(struct.unpack_from("<II6d", wire[6].body, 26),
+                         (3, 1, 5000, 2000, 5000, 2100, 4100, 2100))
+        self.assertEqual(struct.unpack_from("<I", wire[6].body, 1)[0], len(wire[6].body) - 15)
+        self.assertEqual([struct.unpack_from("<3d", r.body, 26) for r in wire[10:13]],
+                         [(5000, 2000, 2070), (5000, 2000, 2060), (5000, 2060, 2070)])
+        # 左折なので円弧は進行方向の順（反時計回り）
+        self.assertEqual(struct.unpack_from("<7d", wire[14].body, 26),
+                         (4970, 2070, 30, 5000, 2070, 4970, 2100))
+        self.assertEqual([struct.unpack_from("<3d", r.body, 26) for r in wire[17:20]],
+                         [(2100, 4970, 4100), (2100, 4970, 4160), (2100, 4160, 4100)])
+        self.assertEqual(struct.unpack_from("<d", wire[5].body, 36)[0], 90.0)
+        self.assertEqual(struct.unpack_from("<d", wire[5].body, 76)[0], 0.0)
+        self.assertEqual(struct.unpack("<II", tfs.section(5).records[0].body), (19, 105))
+
+    def test_right_turn_arc_is_reversed(self):
+        tfs = make_tfs()
+        sheet = elements.sheets(tfs)[0]
+        via = wiring.l_shaped_via(sheet, 60, 40, vertical_first=False)   # 右へ進み、下へ右折
+        self.assertEqual(via, [(5000.0, 2100.0)])
+        wire_id = wiring.add_wire(tfs, sheet, 60, 40, via)
+        by_id = {e.element_id: e for e in elements.top_elements(sheet)}
+        arc = sheet.children[by_id[wire_id].start + 14]
+        self.assertEqual(struct.unpack_from("<7d", arc.body, 26),
+                         (4970, 2070, 30, 5000, 2070, 4970, 2100))
 
     def test_rejects_diagonal_and_unknown(self):
         tfs = make_tfs()
         sheet = elements.sheets(tfs)[0]
         with self.assertRaises(ValueError):
-            wiring.add_straight_wire(tfs, sheet, 40, 60)
+            wiring.add_wire(tfs, sheet, 40, 60)
         with self.assertRaises(LookupError):
-            wiring.add_straight_wire(tfs, sheet, 40, 999)
+            wiring.add_wire(tfs, sheet, 40, 999)
 
 
 if __name__ == "__main__":

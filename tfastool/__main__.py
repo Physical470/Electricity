@@ -6,7 +6,8 @@
     python -m tfastool place 入力.tfs 出力.tfs --sheet 2 --code E0A10S290008 --at 12000,9000
                                                部材を指定座標に追加（--at は複数指定可）
     python -m tfastool wire 入力.tfs 出力.tfs --sheet 2 --between 86564,86570
-                                               2 つの部材（要素ID）を直線の配線で結ぶ（複数指定可）
+                                               2 つの部材（要素ID）を配線で結ぶ（複数指定可）。
+                                               斜めの位置関係なら L 字に折る（--corner hv で横→縦）
     python -m tfastool info 図面.tfs           ファイル構造の概要を表示
     python -m tfastool rewrite 入力.tfs 出力.tfs [--level N]
                                                読み込んで書き直す（書き込み検証用）
@@ -87,7 +88,9 @@ def cmd_wire(args) -> int:
         return 1
     try:
         for a, b in args.between:
-            wiring.add_straight_wire(tfs, all_sheets[args.sheet - 1], a, b)
+            sheet = all_sheets[args.sheet - 1]
+            via = wiring.l_shaped_via(sheet, a, b, vertical_first=args.corner == "vh")
+            wiring.add_wire(tfs, sheet, a, b, via)
     except (LookupError, ValueError) as error:
         print(error, file=sys.stderr)
         return 1
@@ -131,6 +134,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("wire"); p.add_argument("input"); p.add_argument("output")
     p.add_argument("--sheet", type=int, required=True)
     p.add_argument("--between", type=_pair, action="append", required=True, metavar="ID1,ID2")
+    p.add_argument("--corner", choices=["vh", "hv"], default="vh",
+                   help="斜めの位置関係のとき L 字に折る順序。vh=縦→横（既定）、hv=横→縦")
     p.set_defaults(func=cmd_wire)
     p = sub.add_parser("info"); p.add_argument("file"); p.set_defaults(func=cmd_info)
     p = sub.add_parser("rewrite"); p.add_argument("input"); p.add_argument("output")
