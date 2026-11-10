@@ -132,6 +132,36 @@ class WiringTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<7d", arc.body, 26),
                          (4970, 2070, 30, 5000, 2070, 4970, 2100))
 
+    def test_wall_device_connects_at_circle_center(self):
+        tfs = make_tfs()
+        sheet = elements.sheets(tfs)[0]
+        # 基準点 (3000,2000)、円は基準点から上に 30 と 90 ずれた 2 連スイッチ
+        switch = part(70, 3000, 2000)[:3] + [
+            R(2, 5, struct.pack("<II", 71, 0x40)),
+            R(3, 5, geometry(0x40, struct.pack("<3d", 3000, 2030, 30))), R(5, 5, b""),
+            R(2, 5, struct.pack("<II", 72, 0x40)),
+            R(3, 5, geometry(0x40, struct.pack("<3d", 3000, 2090, 30))), R(5, 5, b""),
+            R(5, 5, b""),
+        ]
+        sheet.children[0:0] = switch
+        by_id = {e.element_id: e for e in elements.top_elements(sheet)}
+        point, radius = wiring.connection_point(sheet.children, by_id[70], toward=(3000, 5000))
+        self.assertEqual((point, radius), ((3000.0, 2090.0), 30.0))
+        point, radius = wiring.connection_point(sheet.children, by_id[70], toward=(3000, 0))
+        self.assertEqual((point, radius), ((3000.0, 2030.0), 30.0))
+        # 部材 50 (4000,2000) から横→縦の L 字で結ぶと、近い側の円 (3000,2030) につながる
+        via = wiring.l_shaped_via(sheet, 50, 70, vertical_first=False)
+        self.assertEqual(via, [(3000.0, 2000.0)])
+        with self.assertRaises(ValueError):     # 最後の区間が 30 しかなく描けない
+            wiring.add_wire(tfs, sheet, 50, 70, via)
+        wire_id = wiring.add_wire(tfs, sheet, 50, 70, [(4000, 2500), (3000, 2500)])
+        by_id = {e.element_id: e for e in elements.top_elements(sheet)}
+        wire = sheet.children[by_id[wire_id].start : by_id[wire_id].end + 1]
+        self.assertEqual(struct.unpack_from("<8d", wire[6].body, 34),
+                         (4000, 2000, 4000, 2500, 3000, 2500, 3000, 2090))
+        hidden = [r for r in wire if r.kind == 3 and r.body[10] == 0x20][-1]
+        self.assertEqual(struct.unpack_from("<3d", hidden.body, 26), (3000, 2120, 2090))
+
     def test_rejects_diagonal_and_unknown(self):
         tfs = make_tfs()
         sheet = elements.sheets(tfs)[0]

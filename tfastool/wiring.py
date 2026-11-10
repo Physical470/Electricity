@@ -6,7 +6,8 @@
   ``(部材の要素ID, 01 00 00 04=始点 / 02 00 00 04=終点)`` が並ぶ。
 * 部材側にも同じ種類の属性があり ``(配線の要素ID, [接続の通し番号] 01 00 04)`` が並ぶ。
 * 属性 ``0c 04`` に始点・終点それぞれの配線の出る向き（度）が入る。
-* 最初の図形（点列）が経路。部材の配置基準点どうしを結ぶ。
+* 最初の図形（点列）が経路。両端は器具記号の円の中心（天井付けの器具では
+  配置基準点と同じ、壁付けの器具では基準点からずれた位置）。
 * 子要素 1: 実際に描かれる線。全体の線 1 本と、器具記号の内側に隠れる部分・
   見える部分に分割した線が並ぶ。
 * 子要素 2: 条数記号（斜めの短線）。
@@ -95,13 +96,40 @@ def find_template(sheet: Record) -> list[Record]:
     raise LookupError("ひな形にできる配線（垂直の直線で 2 部材を結ぶもの）がこのシートにありません")
 
 
-def _symbol_radius(records: list[Record], element: Element, fallback: float) -> float:
-    """器具記号の外形円の半径（配線が隠れる長さ）。円が無ければ fallback。"""
-    radius = 0.0
+def connection_point(records: list[Record], element: Element,
+                     toward: tuple[float, float] | None = None,
+                     fallback_radius: float = 0.0) -> tuple[tuple[float, float], float]:
+    """部材に配線をつなぐ点と、そこで配線が記号に隠れる長さを返す。
+
+    Tfas の配線は器具記号の円の中心につながり、中心から円周までが隠れ線になる
+    （壁付けのコンセントやスイッチでは、円の中心は配置基準点からずれている）。
+    円が複数ある記号（2 連スイッチなど）では toward に最も近い円を選ぶ。
+    円を持たない記号では配置基準点を使う。
+    """
+    circles: dict[tuple[float, float], float] = {}
     for record in records[element.start : element.end + 1]:
         if record.kind == KIND_GEOMETRY and record.body[10] == SHAPE_CIRCLE and len(record.body) == 55:
-            radius = max(radius, _doubles(record, 3)[2])
-    return radius or fallback
+            x, y, radius = _doubles(record, 3)
+            for center in circles:
+                if abs(center[0] - x) <= TOLERANCE and abs(center[1] - y) <= TOLERANCE:
+                    circles[center] = max(circles[center], radius)
+                    break
+            else:
+                circles[(x, y)] = radius
+    if not circles:
+        return tuple(element.origin), fallback_radius
+    target = toward or element.origin
+    center = min(circles, key=lambda c: (c[0] - target[0]) ** 2 + (c[1] - target[1]) ** 2)
+    return center, circles[center]
+
+
+def _end_points(records, a: Element, b: Element, via, fallback: float):
+    """両端の接続点と隠れ線の長さ。互いに（または最初/最後の折れ点に）近い円を選ぶ。"""
+    toward_a = via[0] if via else connection_point(records, b, a.origin, fallback)[0]
+    point_a, radius_a = connection_point(records, a, toward_a, fallback)
+    toward_b = via[-1] if via else point_a
+    point_b, radius_b = connection_point(records, b, toward_b, fallback)
+    return point_a, radius_a, point_b, radius_b
 
 
 def _add_part_link(records: list[Record], element: Element, wire_id: int) -> int:
@@ -124,7 +152,7 @@ def add_wire(tfs: TfsFile, sheet: Record, start_id: int, end_id: int,
     """要素ID start_id の部材から end_id の部材へ配線を 1 本追加する。
 
     via は途中の折れ点。経路（始点の部材 → via → 終点の部材）の各区間は
-    水平か垂直でなければならない。レイヤ・線種・条数はシート内の既存の配線
+    水平か垂直でなければならない。経路の両端は各部材の接続点（connection_point）になる。レイヤ・線種・条数はシート内の既存の配線
     （ひな形）と同じになる。追加した配線の要素ID を返す。
     """
     template = find_template(sheet)
@@ -136,7 +164,7 @@ def add_wire(tfs: TfsFile, sheet: Record, start_id: int, end_id: int,
         raise LookupError(f"要素ID {error.args[0]} がこのシートにありません") from None
     if a.origin is None or b.origin is None:
         raise ValueError("配線の両端は部材でなければなりません")
-    points = [tuple(a.origin), *[(float(x), float(y)) for x, y in via], tuple(b.origin)]
+    via = [(float(x), float(y)) for x, y in via]
 
     # ひな形から寸法とレコードの型を取り出す
     group_begin, group_attr, full_line, hidden_line, visible_line = template[8:13]
@@ -145,8 +173,8 @@ def add_wire(tfs: TfsFile, sheet: Record, start_id: int, end_id: int,
     strokes = [_doubles(r, 4) for r in template[21:23]]
     corner = abs(strokes[1][1] - strokes[0][1])  # 条数記号の間隔 = 角の丸め半径（紙面 1mm）
     fallback = abs(hidden_values[2] - hidden_values[1])
-    radius_a = _symbol_radius(records, a, fallback)
-    radius_b = _symbol_radius(records, b, fallback)
+    point_a, radius_a, point_b, radius_b = _end_points(records, a, b, via, fallback)
+    points = [point_a, *via, point_b]
 
     # 区間ごとの向きと、両端で切り詰める長さ
     segments = []
@@ -271,7 +299,7 @@ def l_shaped_via(sheet: Record, start_id: int, end_id: int,
     a, b = by_id.get(start_id), by_id.get(end_id)
     if not a or not b or a.origin is None or b.origin is None:
         return []
-    (x0, y0), (x1, y1) = a.origin, b.origin
+    (x0, y0), _, (x1, y1), _ = _end_points(sheet.children, a, b, [], 0.0)
     if abs(x0 - x1) <= TOLERANCE or abs(y0 - y1) <= TOLERANCE:
         return []
     return [(x0, y1)] if vertical_first else [(x1, y0)]
