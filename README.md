@@ -28,6 +28,13 @@ python -m tfastool place 入力.tfs 出力.tfs --sheet 2 --code E0A10S290008 --a
 ひな形として複製するため、その部材が 1 個も無いシートには追加できません。向きはひな形と同じです。
 
 ```bash
+python -m tfastool wire 入力.tfs 出力.tfs --sheet 2 --between 86564,86570
+```
+
+2 つの部材（`list` で表示される ID）を直線の配線で結びます。部材どうしが水平または垂直に
+並んでいる必要があります。レイヤ・線種・条数は、同じシートにある既存の配線と同じになります。
+
+```bash
 python -m tfastool info 図面.tfs
 ```
 
@@ -46,13 +53,14 @@ python -m tfastool rewrite 入力.tfs 出力.tfs
   圧縮し直したファイル、文字を書き換えたファイルは Tfas 14 E で正常に開けることを確認済みです。
 - 部材の追加：既存の部材を複製して配置できます。追加した部材が Tfas 14 E 上で
   部材として選択されることを確認済みです（拾い集計での確認は未実施）。
-- 配線の追加：未実装です。
+- 配線の追加：水平・垂直の直線 1 本で 2 部材を結ぶ配線を追加できます（`tfastool/wiring.py`）。
+  Tfas 上での動作は検証中です。折れ曲がる経路は未対応です。
 - ヘッダ内の 20 バイト（位置 0x40）の用途は不明です。
 
 ### テスト
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests -t .
 ```
 
 ## 注意

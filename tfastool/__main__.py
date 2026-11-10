@@ -5,6 +5,8 @@
     python -m tfastool list 図面.tfs           部材を 1 個ずつ座標つきで表示
     python -m tfastool place 入力.tfs 出力.tfs --sheet 2 --code E0A10S290008 --at 12000,9000
                                                部材を指定座標に追加（--at は複数指定可）
+    python -m tfastool wire 入力.tfs 出力.tfs --sheet 2 --between 86564,86570
+                                               2 つの部材（要素ID）を直線の配線で結ぶ（複数指定可）
     python -m tfastool info 図面.tfs           ファイル構造の概要を表示
     python -m tfastool rewrite 入力.tfs 出力.tfs [--level N]
                                                読み込んで書き直す（書き込み検証用）
@@ -15,7 +17,7 @@ import argparse
 import csv
 import sys
 
-from . import container, elements, parts
+from . import container, elements, parts, wiring
 
 
 def cmd_parts(args) -> int:
@@ -45,7 +47,7 @@ def cmd_list(args) -> int:
         for element in elements.top_elements(sheet):
             if element.code and element.origin:
                 x, y = element.origin
-                print(f"シート{number}  {element.code}  X={x:9.1f}  Y={y:9.1f}  {names.get(element.code, '')}")
+                print(f"シート{number}  ID={element.element_id}  {element.code}  X={x:9.1f}  Y={y:9.1f}  {names.get(element.code, '')}")
     return 0
 
 
@@ -69,6 +71,28 @@ def cmd_place(args) -> int:
         return 1
     container.save(tfs, args.output)
     print(f"{args.code} を {len(args.at)} 個追加して書き出しました: {args.output}")
+    return 0
+
+
+def _pair(text: str) -> tuple[int, int]:
+    a, b = text.split(",")
+    return int(a), int(b)
+
+
+def cmd_wire(args) -> int:
+    tfs = container.load(args.input)
+    all_sheets = elements.sheets(tfs)
+    if not 1 <= args.sheet <= len(all_sheets):
+        print(f"シート番号は 1〜{len(all_sheets)} で指定してください。", file=sys.stderr)
+        return 1
+    try:
+        for a, b in args.between:
+            wiring.add_straight_wire(tfs, all_sheets[args.sheet - 1], a, b)
+    except (LookupError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    container.save(tfs, args.output)
+    print(f"配線を {len(args.between)} 本追加して書き出しました: {args.output}")
     return 0
 
 
@@ -104,6 +128,10 @@ def main(argv=None) -> int:
     p.add_argument("--sheet", type=int, required=True); p.add_argument("--code", required=True)
     p.add_argument("--at", type=_point, action="append", required=True, metavar="X,Y")
     p.set_defaults(func=cmd_place)
+    p = sub.add_parser("wire"); p.add_argument("input"); p.add_argument("output")
+    p.add_argument("--sheet", type=int, required=True)
+    p.add_argument("--between", type=_pair, action="append", required=True, metavar="ID1,ID2")
+    p.set_defaults(func=cmd_wire)
     p = sub.add_parser("info"); p.add_argument("file"); p.set_defaults(func=cmd_info)
     p = sub.add_parser("rewrite"); p.add_argument("input"); p.add_argument("output")
     p.add_argument("--level", type=int, default=6); p.set_defaults(func=cmd_rewrite)
