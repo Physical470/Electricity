@@ -96,9 +96,9 @@ def translate_geometry(body: bytes, dx: float, dy: float) -> bytes:
         value = struct.unpack_from("<d", data, offset)[0]
         struct.pack_into("<d", data, offset, value + delta)
 
-    if shape in (0x39, 0x68):  # 点列（2 次元 / 3 次元）
+    if shape in (0x38, 0x39, 0x68):  # 多角形 / 点列（2 次元） / 点列（3 次元）
         count = struct.unpack_from("<I", data, 0)[0]
-        stride = 16 if shape == 0x39 else 24
+        stride = 24 if shape == 0x68 else 16
         if len(data) < 8 + count * stride:  # 点列の後ろに追加データが付くことがある
             raise ValueError("点列の長さが想定より短いです")
         for i in range(count):
