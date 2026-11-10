@@ -110,6 +110,8 @@ def translate_geometry(body: bytes, dx: float, dy: float) -> bytes:
         shift(0, dx); shift(8, dy); shift(16, dy)
     elif shape == 0x18 and len(data) == 24:  # 水平線: y, x1, x2
         shift(0, dy); shift(8, dx); shift(16, dx)
+    elif shape == 0x48 and len(data) == 56:  # 円弧: 中心 x, y, 半径, 始点 x, y, 終点 x, y
+        shift(0, dx); shift(8, dy); shift(24, dx); shift(32, dy); shift(40, dx); shift(48, dy)
     elif shape == 0x10 and len(data) == 32:  # 線分: x1, y1, x2, y2
         shift(0, dx); shift(8, dy); shift(16, dx); shift(24, dy)
     else:

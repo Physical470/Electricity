@@ -41,8 +41,10 @@ class ElementsTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<3d", moved, 26), (11, 102, 103))
         moved = elements.translate_geometry(geometry(0x18, struct.pack("<3d", 1, 2, 3)), 10, 100)
         self.assertEqual(struct.unpack_from("<3d", moved, 26), (101, 12, 13))
+        moved = elements.translate_geometry(geometry(0x48, struct.pack("<7d", 1, 2, 30, 4, 5, 6, 7)), 10, 100)
+        self.assertEqual(struct.unpack_from("<7d", moved, 26), (11, 102, 30, 14, 105, 16, 107))
         with self.assertRaises(NotImplementedError):
-            elements.translate_geometry(geometry(0x48, b"\0" * 40), 1, 1)
+            elements.translate_geometry(geometry(0x38, b"\0" * 40), 1, 1)
 
     def test_duplicate(self):
         tfs = make_tfs()
